@@ -60,9 +60,9 @@ enum ShortcutSender {
         log.info("Head turn \(turn.rawValue, privacy: .public) → \(action.rawValue, privacy: .public)")
     }
 
-    /// A left click wherever the cursor is now.
-    static func click() {
-        let point = CGEvent(source: nil)?.location ?? .zero
+    /// A left click at `point`, or wherever the cursor is now.
+    static func click(at point: CGPoint? = nil) {
+        let point = point ?? CGEvent(source: nil)?.location ?? .zero
         guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
               let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
         else { return }
