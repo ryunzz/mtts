@@ -94,7 +94,7 @@ final class MicTranscriber {
             let partial = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
             let failed = error != nil
-            Task { @MainActor in
+            Task { @MainActor [owner] in
                 owner?.handle(generation: generation, partial: partial, isFinal: isFinal, failed: failed)
             }
         }
