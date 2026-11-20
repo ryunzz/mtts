@@ -40,6 +40,13 @@ private struct VocabularyColumn: View {
                             }
                     }
                 }
+                Section("Gestures") {
+                    WordRow(word: Template.displayName(Template.clickLabel),
+                            count: model.clickTakeCount,
+                            target: Layout.clickTakeTarget,
+                            symbol: "cursorarrow.click.2")
+                        .tag(Template.clickLabel)
+                }
             }
             .listStyle(.inset)
             Divider()
@@ -76,12 +83,18 @@ private struct VocabularyColumn: View {
 private struct WordRow: View {
     var word: String
     var count: Int
+    var target = Layout.takeTarget
+    var symbol: String?
 
     var body: some View {
         HStack {
-            Text(word)
+            if let symbol {
+                Label(word, systemImage: symbol)
+            } else {
+                Text(word)
+            }
             Spacer()
-            if count >= Layout.takeTarget {
+            if count >= target {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.caption)
@@ -99,12 +112,15 @@ private struct CaptureCard: View {
     var body: some View {
         let word = model.selectedWord
         let count = word.map { model.templates(for: $0).count } ?? 0
-        Card(word.map { "Record “\($0)”" } ?? "Choose a word",
-             caption: "Silently mouth the word while holding Space. Keep your head still.") {
-            TakeProgress(count: count)
+        let isClick = word == Template.clickLabel
+        Card(isClick ? "Record your click gesture" : word.map { "Record “\($0)”" } ?? "Choose a word",
+             caption: isClick
+                ? "Hold Space, do the motion you want to click with (say, open your mouth wide), release. Keep your head still. 5–8 takes."
+                : "Silently mouth the word while holding Space. Keep your head still.") {
+            TakeProgress(count: count, target: isClick ? Layout.clickTakeTarget : Layout.takeTarget)
         } content: {
             CapturePad(
-                title: word.map { "Mouth “\($0)”" } ?? "Pick a word on the left",
+                title: isClick ? "Do your click gesture" : word.map { "Mouth “\($0)”" } ?? "Pick a word on the left",
                 isCapturing: model.capture.isCapturing,
                 isEnabled: word != nil && model.motion.status == .streaming,
                 onBegin: model.capture.begin,
@@ -121,7 +137,9 @@ private struct TakesCard: View {
             let takes = Array(model.templates(for: word).reversed())
             Card("Takes", caption: "Rotation rate per take, newest first") {
                 if takes.isEmpty {
-                    Text("No takes yet. Hold Space and mouth “\(word)”.")
+                    Text(word == Template.clickLabel
+                         ? "No takes yet. Hold Space and do your click gesture."
+                         : "No takes yet. Hold Space and mouth “\(word)”.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 64)

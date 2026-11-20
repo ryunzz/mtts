@@ -162,6 +162,9 @@ final class AppModel {
     private(set) var evaluation: Evaluation?
     private(set) var isEvaluating = false
     private(set) var lastTemplateID: Template.ID?
+    /// Built from the click-gesture takes once there are enough of them.
+    private(set) var clickMatcher: ClickGestureMatcher?
+    var clickTakeCount: Int { templates(for: Template.clickLabel).count }
 
     // MARK: Head shortcuts
 
@@ -319,6 +322,11 @@ final class AppModel {
         dataset.templates(forDevice: deviceKey)
     }
 
+    /// Takes of vocabulary words, without the click gesture.
+    var wordTemplates: [Template] {
+        activeTemplates.filter { $0.label != Template.clickLabel }
+    }
+
     func templates(for word: String) -> [Template] {
         activeTemplates.filter { $0.label == word }
     }
@@ -355,21 +363,22 @@ final class AppModel {
     }
 
     private func rebuildClassifier() {
-        classifier = TemplateClassifier(templates: activeTemplates, featureSet: featureSet)
+        classifier = TemplateClassifier(templates: wordTemplates, featureSet: featureSet)
+        clickMatcher = ClickGestureMatcher(templates: templates(for: Template.clickLabel))
         evaluation = nil
     }
 
     func evaluate() {
         guard !isEvaluating else { return }
         isEvaluating = true
-        let templates = activeTemplates
+        let templates = wordTemplates
         let featureSet = featureSet
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 Evaluation.run(templates: templates, featureSet: featureSet)
             }.value
             self.isEvaluating = false
-            guard self.featureSet == featureSet, self.activeTemplates == templates else { return }
+            guard self.featureSet == featureSet, self.wordTemplates == templates else { return }
             self.evaluation = result
         }
     }

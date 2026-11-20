@@ -8,6 +8,8 @@ enum Layout {
     static let cardPadding: CGFloat = 16
     static let cornerRadius: CGFloat = 12
     static let takeTarget = 10
+    /// Click gesture takes to aim for: enough for the matcher to learn its spread.
+    static let clickTakeTarget = ClickGestureMatcher.minimumTakes + 5
 }
 
 extension Color {
