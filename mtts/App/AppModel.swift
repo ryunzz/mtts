@@ -163,6 +163,52 @@ final class AppModel {
     private(set) var isEvaluating = false
     private(set) var lastTemplateID: Template.ID?
 
+    // MARK: Head shortcuts
+
+    /// Turn your head from center to fire a shortcut; face center again to re-arm.
+    var gesturesEnabled = UserDefaults.standard.bool(forKey: "gesturesEnabled") {
+        didSet {
+            UserDefaults.standard.set(gesturesEnabled, forKey: "gesturesEnabled")
+            gestureDetector.reset()
+            if gesturesEnabled && !ShortcutSender.isTrusted { ShortcutSender.requestAccess() }
+            refreshAccessibility()
+        }
+    }
+    var gestureAction = GestureAction(rawValue: UserDefaults.standard.string(forKey: "gestureAction") ?? "") ?? .tabs {
+        didSet { UserDefaults.standard.set(gestureAction.rawValue, forKey: "gestureAction") }
+    }
+    var gestureTriggerDegrees: Double = UserDefaults.standard.object(forKey: "gestureTriggerDegrees") as? Double ?? 25 {
+        didSet {
+            UserDefaults.standard.set(gestureTriggerDegrees, forKey: "gestureTriggerDegrees")
+            gestureDetector.triggerAngle = gestureTriggerDegrees * .pi / 180
+        }
+    }
+    var gesturesInverted = UserDefaults.standard.bool(forKey: "gesturesInverted") {
+        didSet {
+            UserDefaults.standard.set(gesturesInverted, forKey: "gesturesInverted")
+            gestureDetector.invert = gesturesInverted
+        }
+    }
+    private(set) var gestureArmed = false
+    private(set) var lastGesture: (turn: HeadTurn, at: Date)?
+    private(set) var accessibilityTrusted = ShortcutSender.isTrusted
+    @ObservationIgnored private var gestureDetector = HeadGestureDetector()
+
+    func refreshAccessibility() {
+        accessibilityTrusted = ShortcutSender.isTrusted
+    }
+
+    private func detectGesture(_ sample: MotionSample) {
+        guard gesturesEnabled, let reference = motion.yawReference else { return }
+        // Don't fire shortcuts while recording a word.
+        guard !capture.isCapturing else { return }
+        let turn = gestureDetector.ingest(HeadPose(sample: sample, yawReference: reference))
+        if gestureArmed != gestureDetector.isArmed { gestureArmed = gestureDetector.isArmed }
+        guard let turn else { return }
+        lastGesture = (turn, Date())
+        ShortcutSender.send(gestureAction, for: turn)
+    }
+
     // MARK: Decoding
 
     var decodeMode: CaptureController.Mode = .hold {
@@ -179,6 +225,8 @@ final class AppModel {
     init() {
         selectedWord = dataset.vocabulary.first
         rebuildClassifier()
+        gestureDetector.triggerAngle = gestureTriggerDegrees * .pi / 180
+        gestureDetector.invert = gesturesInverted
     }
 
     func start() {
@@ -200,6 +248,7 @@ final class AppModel {
     private func ingest(_ sample: MotionSample) {
         capture.ingest(sample)
         recorder.record(sample)
+        detectGesture(sample)
     }
 
     /// Re-keys the take set only for a confirmed model, so a failed or early Bluetooth lookup
