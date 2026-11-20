@@ -64,6 +64,7 @@ Both gestures come from the same headphone motion stream (gyroscope, acceleromet
 
 - **Head Shortcuts** (Live screen): face forward and click **Recenter**, then turn your head past the trigger angle (25° by default). A left turn sends *previous* and a right turn sends *next*: tabs (⌃⇧⇥ / ⌃⇥), desktops (⌃← / ⌃→) or arrow keys for slides. Each turn fires once. Face center again (within 5°) to re-arm. Shortcuts pause while you're recording a take.
 - **Gesture Click** (Live screen): record your own click motion on **Train › Gestures › Click gesture**, for example opening your mouth wide. Hold Space, do the motion, release, and repeat 5–8 times; at least 3 takes are needed. Back on Live, the match meter fills as the stream gets close to your takes. Turn the card on to left-click wherever the cursor is. Raise **Sensitivity** if it misses and lower it if it clicks by accident. Fast head turns are ignored, so looking around doesn't click.
+- **Head Pointer** (Live screen): the cursor follows where your head points. Face the middle of the screen, click **Center**, and turn it on. Turning about 20° (**Reach**) reaches the side edges, and a smaller nod reaches top and bottom. Move the mouse yourself at any time and the pointer steps aside for a moment. With **Gesture Click** on too, the click lands where you were pointing when the motion started. Head Shortcuts and Head Pointer both use head turns, so turning one on turns the other off.
 
 ## Before a demo
 
@@ -71,6 +72,14 @@ Both gestures come from the same headphone motion stream (gyroscope, acceleromet
 2. On **Train**, record about 10 takes for each of 3–5 words. That takes roughly 5–10 minutes.
 3. Run **Signal Check** and confirm p < 0.05.
 4. On **Decode**, either use **Hold Space**, or pick **Auto-detect** and click **Calibrate Noise Floor** while holding still for 2 seconds.
+
+### Gesture demo
+
+Grant **Accessibility** access to mtts beforehand (System Settings › Privacy & Security › Accessibility). Because the app is ad-hoc signed, each rebuild needs the grant again, so build once and don't rebuild before you present.
+
+1. **Tabs:** open a browser with a few tabs next to mtts. On **Live**, face forward and click **Recenter**, then turn on **Head Shortcuts** with *Switch Tabs*. Click into the browser, glance right for the next tab and left for the previous one, facing center between turns.
+2. **Click motion:** on **Train › Gestures › Click gesture**, record 6–8 takes of something distinct, like a wide mouth-open. Back on **Live**, show the match meter filling when you do it and staying low when you talk or look around.
+3. **Hands-free cursor:** turn off Head Shortcuts, face the middle of the screen, click **Center** on **Head Pointer** and turn it on. Steer to a button or link with your head, then turn on **Gesture Click** and do your click motion to press it.
 
 ## How decoding works
 
