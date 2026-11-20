@@ -201,6 +201,41 @@ final class AppModel {
         accessibilityTrusted = ShortcutSender.isTrusted
     }
 
+    // MARK: Gesture click
+
+    /// Clicks the mouse wherever the cursor is when your trained click gesture is seen.
+    /// Not persisted: it takes over the mouse button.
+    var clickEnabled = false {
+        didSet {
+            guard clickEnabled != oldValue else { return }
+            clickDetector.reset()
+            clickScore = nil
+            if clickEnabled && !ShortcutSender.isTrusted { ShortcutSender.requestAccess() }
+            refreshAccessibility()
+        }
+    }
+    var clickSensitivity: Double = UserDefaults.standard.object(forKey: "clickSensitivity") as? Double ?? 1.2 {
+        didSet {
+            UserDefaults.standard.set(clickSensitivity, forKey: "clickSensitivity")
+            clickDetector.sensitivity = clickSensitivity
+        }
+    }
+    /// Live match against the click takes: at or below 1 clicks.
+    private(set) var clickScore: Double?
+    private(set) var lastClick: Date?
+    @ObservationIgnored private var clickDetector = ClickGestureDetector()
+
+    /// Watches for the trained click gesture. Runs on Live (so you can test it with the meter)
+    /// or while clicking is on; only clicks while it's on.
+    private func detectClickGesture(_ sample: MotionSample) {
+        guard clickMatcher != nil, clickEnabled || screen == .live, !capture.isCapturing else { return }
+        let fired = clickDetector.ingest(sample)
+        if clickScore != clickDetector.score { clickScore = clickDetector.score }
+        guard fired != nil else { return }
+        lastClick = Date()
+        if clickEnabled { ShortcutSender.click() }
+    }
+
     private func detectGesture(_ sample: MotionSample) {
         guard gesturesEnabled, let reference = motion.yawReference else { return }
         // Don't fire shortcuts while recording a word.
@@ -230,6 +265,7 @@ final class AppModel {
         rebuildClassifier()
         gestureDetector.triggerAngle = gestureTriggerDegrees * .pi / 180
         gestureDetector.invert = gesturesInverted
+        clickDetector.sensitivity = clickSensitivity
     }
 
     func start() {
@@ -252,6 +288,7 @@ final class AppModel {
         capture.ingest(sample)
         recorder.record(sample)
         detectGesture(sample)
+        detectClickGesture(sample)
     }
 
     /// Re-keys the take set only for a confirmed model, so a failed or early Bluetooth lookup
@@ -365,6 +402,9 @@ final class AppModel {
     private func rebuildClassifier() {
         classifier = TemplateClassifier(templates: wordTemplates, featureSet: featureSet)
         clickMatcher = ClickGestureMatcher(templates: templates(for: Template.clickLabel))
+        clickDetector.matcher = clickMatcher
+        clickDetector.reset()
+        clickScore = nil
         evaluation = nil
     }
 
