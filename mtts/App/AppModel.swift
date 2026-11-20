@@ -173,6 +173,8 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(gesturesEnabled, forKey: "gesturesEnabled")
             gestureDetector.reset()
+            // Shortcuts and the pointer both use head turns; only one at a time.
+            if gesturesEnabled && pointerEnabled { pointerEnabled = false }
             if gesturesEnabled && !ShortcutSender.isTrusted { ShortcutSender.requestAccess() }
             refreshAccessibility()
         }
@@ -231,9 +233,67 @@ final class AppModel {
         guard clickMatcher != nil, clickEnabled || screen == .live, !capture.isCapturing else { return }
         let fired = clickDetector.ingest(sample)
         if clickScore != clickDetector.score { clickScore = clickDetector.score }
-        guard fired != nil else { return }
+        guard let start = fired else { return }
         lastClick = Date()
-        if clickEnabled { ShortcutSender.click() }
+        // With the head pointer on, click where you were pointing when the gesture began.
+        if clickEnabled { ShortcutSender.click(at: pointerEnabled ? headPointer.position(at: start) : nil) }
+    }
+
+    // MARK: Head pointer
+
+    /// The cursor follows where your head points. Not persisted: it takes over the mouse.
+    var pointerEnabled = false {
+        didSet {
+            guard pointerEnabled != oldValue else { return }
+            if pointerEnabled {
+                if gesturesEnabled { gesturesEnabled = false }
+                if !ShortcutSender.isTrusted { ShortcutSender.requestAccess() }
+                refreshAccessibility()
+                centerPointer()
+                headPointer.start()
+            } else {
+                headPointer.stop()
+            }
+        }
+    }
+    var pointerReachDegrees: Double = UserDefaults.standard.object(forKey: "pointerReachDegrees") as? Double ?? 20 {
+        didSet {
+            UserDefaults.standard.set(pointerReachDegrees, forKey: "pointerReachDegrees")
+            headPointer.mapping.reachDegrees = pointerReachDegrees
+        }
+    }
+    var pointerSmoothing: Double = UserDefaults.standard.object(forKey: "pointerSmoothing") as? Double ?? 0.18 {
+        didSet {
+            UserDefaults.standard.set(pointerSmoothing, forKey: "pointerSmoothing")
+            headPointer.smoothing = pointerSmoothing
+        }
+    }
+    var pointerInvertX = UserDefaults.standard.bool(forKey: "pointerInvertX") {
+        didSet {
+            UserDefaults.standard.set(pointerInvertX, forKey: "pointerInvertX")
+            headPointer.mapping.invertX = pointerInvertX
+        }
+    }
+    var pointerInvertY = UserDefaults.standard.bool(forKey: "pointerInvertY") {
+        didSet {
+            UserDefaults.standard.set(pointerInvertY, forKey: "pointerInvertY")
+            headPointer.mapping.invertY = pointerInvertY
+        }
+    }
+    @ObservationIgnored private let headPointer = HeadPointer()
+    /// The pitch that counts as level for the pointer, captured by `centerPointer()`.
+    @ObservationIgnored private var pointerPitchReference = 0.0
+
+    /// Makes where you're looking now the middle of the screen (turn and nod).
+    func centerPointer() {
+        motion.recenter()
+        pointerPitchReference = motion.latest?.pitch ?? 0
+    }
+
+    private func steerPointer(_ sample: MotionSample) {
+        guard pointerEnabled, let reference = motion.yawReference else { return }
+        headPointer.update(pose: HeadPose(sample: sample, yawReference: reference),
+                           pitchReference: pointerPitchReference)
     }
 
     private func detectGesture(_ sample: MotionSample) {
@@ -266,6 +326,9 @@ final class AppModel {
         gestureDetector.triggerAngle = gestureTriggerDegrees * .pi / 180
         gestureDetector.invert = gesturesInverted
         clickDetector.sensitivity = clickSensitivity
+        headPointer.mapping = HeadPointerMapping(reachDegrees: pointerReachDegrees,
+                                                 invertX: pointerInvertX, invertY: pointerInvertY)
+        headPointer.smoothing = pointerSmoothing
     }
 
     func start() {
@@ -288,6 +351,7 @@ final class AppModel {
         capture.ingest(sample)
         recorder.record(sample)
         detectGesture(sample)
+        steerPointer(sample)
         detectClickGesture(sample)
     }
 
