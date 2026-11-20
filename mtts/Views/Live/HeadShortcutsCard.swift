@@ -1,13 +1,17 @@
 import SwiftUI
 
-/// Turn your head from center to send a shortcut; face center again to re-arm.
+/// Point your nose at the center to arm, then turn left or right to send a shortcut.
 struct HeadShortcutsCard: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
         Card("Head Shortcuts",
-             caption: "Turn from center to fire once. Face center again to re-arm.") {
+             caption: "Point your nose at the center circle to arm, then turn: left goes left, right goes right. Come back to center before the next one.") {
+            Button("Center", systemImage: "scope") { model.motion.recenter() }
+                .buttonStyle(.borderless)
+                .disabled(!model.canRecenter)
+                .help("Make where your nose points now the center")
             Toggle("On", isOn: $model.gesturesEnabled)
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -33,7 +37,7 @@ struct HeadShortcutsCard: View {
                         .font(.callout)
                 }
                 Spacer(minLength: 0)
-                GestureStatus()
+                NoseTarget()
             }
             if model.gesturesEnabled && !model.accessibilityTrusted {
                 AccessibilityWarning(action: "send keystrokes to other apps")
@@ -64,48 +68,85 @@ struct AccessibilityWarning: View {
     }
 }
 
-/// Armed / fired, with the last turn flashing briefly.
-private struct GestureStatus: View {
+/// Where your nose points, with the center circle that arms shortcuts and the left and
+/// right zones that fire them. The zone you turned into lights up.
+private struct NoseTarget: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
-            let recent = model.lastGesture.flatMap { context.date.timeIntervalSince($0.at) < 1.2 ? $0.turn : nil }
-            HStack(spacing: 14) {
-                arrow("arrow.left", label: "Previous", lit: recent == .left)
-                VStack(spacing: 4) {
-                    Image(systemName: model.gestureArmed ? "scope" : "circle.dashed")
-                        .font(.title2)
-                        .foregroundStyle(statusColor)
-                    Text(statusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(width: 110)
-                arrow("arrow.right", label: "Next", lit: recent == .right)
+        VStack(spacing: 6) {
+            LiveTimeline { frame in
+                Canvas { context, size in draw(&context, size, pose: frame.pose) }
             }
+            .frame(width: 320, height: 120)
+            .background(Color.subtleFill.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Text(statusText)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(statusColor)
         }
+        .accessibilityElement()
+        .accessibilityLabel("Nose target: \(statusText)")
+    }
+
+    /// Degrees across half the width: a bit past the trigger so the zones have room.
+    private var halfRange: Double { model.gestureTriggerDegrees * 1.5 }
+    private static let pitchHalfRange = 15.0
+
+    private func draw(_ context: inout GraphicsContext, _ size: CGSize, pose: HeadPose?) {
+        let mid = CGPoint(x: size.width / 2, y: size.height / 2)
+        let degreesToX = size.width / 2 / halfRange
+        let trigger = model.gestureTriggerDegrees * degreesToX
+        let recent = model.lastGesture.flatMap { Date().timeIntervalSince($0.at) < 1.0 ? $0.turn : nil }
+        let (leftLabel, rightLabel) = model.gestureAction.zoneLabels
+
+        // Left and right zones, lit when they just fired.
+        for (turn, rect, label) in [(HeadTurn.left, CGRect(x: 0, y: 0, width: mid.x - trigger, height: size.height), leftLabel),
+                                    (HeadTurn.right, CGRect(x: mid.x + trigger, y: 0, width: mid.x - trigger, height: size.height), rightLabel)] {
+            let lit = recent == turn
+            context.fill(Path(roundedRect: rect, cornerRadius: 10),
+                         with: .color(lit ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.05)))
+            context.draw(Text(label).font(.caption.weight(lit ? .bold : .regular))
+                            .foregroundStyle(lit ? Color.accentColor : Color.secondary),
+                         at: CGPoint(x: rect.midX, y: size.height - 12))
+        }
+
+        // The center circle: point your nose in here to arm.
+        let armed = model.gesturesEnabled && model.gestureArmed
+        let straight = pose?.isStraight ?? false
+        let r = HeadPose.straightToleranceDegrees * degreesToX
+        let ring = Path(ellipseIn: CGRect(x: mid.x - r, y: mid.y - r, width: r * 2, height: r * 2))
+        context.fill(ring, with: .color((straight ? Color.green : Color.primary).opacity(straight ? 0.18 : 0.04)))
+        context.stroke(ring, with: .color(straight ? .green : .secondary.opacity(0.6)), lineWidth: straight ? 2 : 1)
+
+        // The nose. Shown the way it will fire, so "Swap left and right" moves it too.
+        guard let pose else { return }
+        let yaw = (model.gesturesInverted ? -pose.yaw : pose.yaw) * 180 / .pi
+        let pitch = pose.pitch * 180 / .pi
+        let x = min(max(mid.x - yaw * degreesToX, 6), size.width - 6)
+        let y = min(max(mid.y - pitch / Self.pitchHalfRange * (size.height / 2), 6), size.height - 6)
+        let color: Color = !model.gesturesEnabled ? .secondary : armed ? .green : .orange
+        context.fill(Path(ellipseIn: CGRect(x: x - 6, y: y - 6, width: 12, height: 12)), with: .color(color))
     }
 
     private var statusText: String {
-        if !model.gesturesEnabled { return "Off" }
+        if !model.gesturesEnabled { return "Off: turn on to use" }
         if model.motion.status != .streaming { return "No motion" }
-        return model.gestureArmed ? "Armed" : "Face center"
+        return model.gestureArmed ? "Armed: turn left or right" : "Point your nose at the center"
     }
 
     private var statusColor: Color {
         guard model.gesturesEnabled, model.motion.status == .streaming else { return .secondary }
         return model.gestureArmed ? .green : .orange
     }
+}
 
-    private func arrow(_ symbol: String, label: String, lit: Bool) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: symbol)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(lit ? Color.accentColor : Color.secondary.opacity(0.4))
-                .scaleEffect(lit ? 1.25 : 1)
-                .animation(.spring(duration: 0.25), value: lit)
-            Text(label).font(.caption).foregroundStyle(.secondary)
+private extension GestureAction {
+    /// What turning into each zone does, for the zone labels.
+    var zoneLabels: (left: String, right: String) {
+        switch self {
+        case .tabs: ("◀ Tab left", "Tab right ▶")
+        case .desktops: ("◀ Desktop left", "Desktop right ▶")
+        case .arrows: ("◀ Previous", "Next ▶")
         }
     }
 }
