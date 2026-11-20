@@ -1,6 +1,6 @@
 # mtts
 
-**mtts** turns **mouthed words into text**. It's a macOS prototype that tests whether the head-tracking motion sensor in **Powerbeats Pro 2** can turn **silently mouthed words into text**.
+**mtts** (mouth to text) is a macOS prototype that tests whether the head-tracking motion sensor in **Powerbeats Pro 2** can turn **silently mouthed words into text**. It also lets you control your Mac with head gestures: turn your head to switch tabs, or click with a motion you train yourself.
 
 When you mouth a word, your jaw moves, and the jaw joint sits right in front of the ear canal. So the earbuds move a tiny amount. mtts reads that motion through `CMHeadphoneMotionManager`, learns what each of your words looks like, and matches new ones against them. There's no language model: it's a small-vocabulary template matcher plus a statistical test that tells you whether the signal is real.
 
@@ -57,6 +57,13 @@ Training takes are stored per headphone model. Takes recorded with AirPods are n
 | **Live** | Everything the headphones send, as it arrives. A 3D head that mirrors yours (with **Recenter**), a gyroscope scope in °/s, an accelerometer scope in milli-g, and a trail of where you're looking. Above them: the model, firmware, battery (left, right, case), sample rate, jitter, latency, dropped samples and how long the stream has run. **Freeze** in the toolbar holds every plot still. The microphone input and session recorder sit at the bottom. |
 | **Train** | Pick a word, hold **Space**, mouth it, release. Each take is stored as a template; aim for 10 per word. **Signal Check** runs leave-one-out classification and a 500× shuffled-label test, then shows accuracy against chance, a p-value and a confusion matrix. The channel checkboxes let you test which motion channels carry the signal. |
 | **Decode** | Motion to text. Hold Space, or use auto-detect after calibrating the noise floor. Each segment is matched against your takes and added to the transcript. A live mic transcript runs alongside it for comparison. |
+
+## Head gestures
+
+Both gestures come from the same headphone motion stream (gyroscope, accelerometer and attitude). They send events to whatever app is in front, so macOS asks for **Accessibility** access the first time (System Settings › Privacy & Security › Accessibility).
+
+- **Head Shortcuts** (Live screen): face forward and click **Recenter**, then turn your head past the trigger angle (25° by default). A left turn sends *previous* and a right turn sends *next*: tabs (⌃⇧⇥ / ⌃⇥), desktops (⌃← / ⌃→) or arrow keys for slides. Each turn fires once. Face center again (within 5°) to re-arm. Shortcuts pause while you're recording a take.
+- **Gesture Click** (Live screen): record your own click motion on **Train › Gestures › Click gesture**, for example opening your mouth wide. Hold Space, do the motion, release, and repeat 5–8 times; at least 3 takes are needed. Back on Live, the match meter fills as the stream gets close to your takes. Turn the card on to left-click wherever the cursor is. Raise **Sensitivity** if it misses and lower it if it clicks by accident. Fast head turns are ignored, so looking around doesn't click.
 
 ## Before a demo
 
