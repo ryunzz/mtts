@@ -4,12 +4,17 @@ import SwiftUI
 /// turn left and it turns toward the left of the screen.
 struct HeadOrientationView: View {
     let pose: HeadPose?
+    /// Look straight at the face instead of from a three-quarter angle, with a target
+    /// that turns green when you face forward.
+    var headOn = false
+
+    static func isStraight(_ pose: HeadPose?) -> Bool { pose?.isStraight ?? false }
 
     var body: some View {
         Canvas { context, size in
-            let camera = HeadCamera(size: size)
+            let camera = HeadCamera(size: size, headOn: headOn)
             let rotation = (pose ?? HeadPose(pitch: 0, roll: 0, yaw: 0)).orientation
-            drawFloor(&context, camera)
+            if headOn { drawTarget(&context, camera) } else { drawFloor(&context, camera) }
             drawWire(&context, camera, rotation, front: false)
             drawBuds(&context, camera, rotation, front: false)
             drawVisor(&context, camera, rotation)
@@ -20,6 +25,22 @@ struct HeadOrientationView: View {
         .opacity(pose == nil ? 0.4 : 1)
         .accessibilityElement()
         .accessibilityLabel("Head orientation")
+    }
+
+    /// A fixed crosshair where the nose points when you face forward.
+    private func drawTarget(_ context: inout GraphicsContext, _ camera: HeadCamera) {
+        let straight = Self.isStraight(pose)
+        let color: Color = straight ? .green : .secondary
+        let center = camera.project(HeadGeometry.noseTip)
+        let r: CGFloat = 13
+        context.stroke(Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)),
+                       with: .color(color.opacity(straight ? 0.9 : 0.5)), lineWidth: straight ? 2 : 1)
+        var cross = Path()
+        cross.move(to: CGPoint(x: center.x - r - 8, y: center.y)); cross.addLine(to: CGPoint(x: center.x - r + 4, y: center.y))
+        cross.move(to: CGPoint(x: center.x + r - 4, y: center.y)); cross.addLine(to: CGPoint(x: center.x + r + 8, y: center.y))
+        cross.move(to: CGPoint(x: center.x, y: center.y - r - 8)); cross.addLine(to: CGPoint(x: center.x, y: center.y - r + 4))
+        cross.move(to: CGPoint(x: center.x, y: center.y + r - 4)); cross.addLine(to: CGPoint(x: center.x, y: center.y + r + 8))
+        context.stroke(cross, with: .color(color.opacity(0.6)), lineWidth: 1)
     }
 
     private func drawFloor(_ context: inout GraphicsContext, _ camera: HeadCamera) {
@@ -157,10 +178,12 @@ private struct HeadCamera {
     let right: Vector3
     let up: Vector3
 
-    init(size: CGSize) {
-        center = CGPoint(x: size.width / 2, y: size.height * 0.42)
-        unit = min(size.width, size.height) * 0.34
-        let d = Vector3(sin(Self.azimuth) * cos(Self.elevation), cos(Self.azimuth) * cos(Self.elevation), sin(Self.elevation))
+    init(size: CGSize, headOn: Bool = false) {
+        center = CGPoint(x: size.width / 2, y: size.height * (headOn ? 0.5 : 0.42))
+        unit = min(size.width, size.height) * (headOn ? 0.36 : 0.34)
+        let azimuth = headOn ? 0 : Self.azimuth
+        let elevation = headOn ? 0 : Self.elevation
+        let d = Vector3(sin(azimuth) * cos(elevation), cos(azimuth) * cos(elevation), sin(elevation))
         let forward = d * -1
         let cameraRight = forward.cross(.unitZ).normalized
         toCamera = d

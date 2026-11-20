@@ -129,19 +129,37 @@ private struct StatusPill: View {
 
 private struct OrientationCard: View {
     @Environment(AppModel.self) private var model
+    @AppStorage("headOnView") private var headOn = true
 
     var body: some View {
         let pose = model.readoutFrame.pose
+        let straight = HeadOrientationView.isStraight(pose)
         Card("Head Orientation", caption: "Moves like a mirror") {
+            Picker("View", selection: $headOn) {
+                Text("Front").tag(true)
+                Text("3/4").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Front looks straight at your face: line the nose up with the target to face forward")
             Button("Recenter", systemImage: "scope") { model.motion.recenter() }
                 .buttonStyle(.borderless)
                 .disabled(!model.canRecenter)
                 .help("Make the direction you're facing now the forward direction")
         } content: {
             LiveTimeline { frame in
-                HeadOrientationView(pose: frame.pose)
+                HeadOrientationView(pose: frame.pose, headOn: headOn)
             }
             .frame(height: 200)
+            .overlay(alignment: .topLeading) {
+                if headOn, pose != nil {
+                    Label(straight ? "Looking straight" : "Line the nose up with the target",
+                          systemImage: straight ? "checkmark.circle.fill" : "scope")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(straight ? Color.green : Color.secondary)
+                }
+            }
             HStack(spacing: 0) {
                 AngleReadout(title: "Pitch", hint: "nod", radians: pose?.pitch, color: .orange)
                 AngleReadout(title: "Roll", hint: "tilt", radians: pose?.roll, color: .purple)
