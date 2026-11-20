@@ -1,0 +1,350 @@
+import AppKit
+import Observation
+
+/// One line of headphone state for the sidebar, banners and toolbar.
+enum HeadphoneStatus: Equatable {
+    case streaming(rate: Double)
+    case waiting
+    case noHeadphones
+    case unsupported(name: String)
+    case denied
+    case unavailable(String)
+
+    var title: String {
+        switch self {
+        case .streaming(let rate): "Streaming · \(Int(rate.rounded())) Hz"
+        case .waiting: "Waiting for motion"
+        case .noHeadphones: "No headphones"
+        case .unsupported: "No head tracking"
+        case .denied: "Motion access off"
+        case .unavailable(let message): message
+        }
+    }
+
+    var isStreaming: Bool {
+        if case .streaming = self { return true }
+        return false
+    }
+}
+
+struct DecodedWord: Identifiable, Hashable {
+    let id = UUID()
+    var prediction: Prediction
+    var text: String { prediction.best?.label ?? "?" }
+}
+
+@MainActor @Observable
+final class AppModel {
+    enum Screen: String, CaseIterable, Identifiable {
+        case live = "Live"
+        case train = "Train"
+        case decode = "Decode"
+        var id: String { rawValue }
+        var symbol: String {
+            switch self {
+            case .live: "gyroscope"
+            case .train: "square.stack.3d.up"
+            case .decode: "text.bubble"
+            }
+        }
+    }
+
+    let motion = HeadphoneMotionService()
+    let device = HeadphoneDeviceMonitor()
+    let audio = AudioService()
+    let transcriber = MicTranscriber()
+    let capture = CaptureController()
+    let recorder = SessionRecorder()
+
+    var screen: Screen = .live {
+        didSet {
+            syncCaptureMode()
+            if screen != .live { frozenMotion = nil }
+        }
+    }
+
+    // MARK: Live view
+
+    /// A still copy of the live plots, taken by Freeze.
+    struct FrozenMotion {
+        let frame: LiveFrame
+    }
+
+    private(set) var frozenMotion: FrozenMotion?
+    @ObservationIgnored private var liveEdge: LiveEdge?
+
+    /// What the live plots should draw at `uptime`: the frozen copy, or the stream.
+    func liveFrame(at uptime: TimeInterval) -> LiveFrame {
+        if let frozenMotion { return frozenMotion.frame }
+        var edge: TimeInterval?
+        if motion.status == .streaming, let candidate = motion.stats.displayTime(at: uptime) {
+            let advanced = liveEdge?.advanced(to: candidate, stream: motion.streamID)
+                ?? LiveEdge(stream: motion.streamID, time: candidate)
+            liveEdge = advanced
+            edge = advanced.time
+        }
+        return LiveFrame(samples: motion.history, edge: edge, yawReference: motion.yawReference ?? 0)
+    }
+
+    /// The newest reading, for numbers that update at the sensor rate rather than every frame.
+    var readoutFrame: LiveFrame {
+        if let frozenMotion { return frozenMotion.frame }
+        guard motion.status == .streaming, let latest = motion.latest else {
+            return LiveFrame(samples: [], edge: nil, yawReference: 0)
+        }
+        return LiveFrame(samples: [latest], edge: latest.t, yawReference: motion.yawReference ?? latest.yaw)
+    }
+
+    var canFreeze: Bool { frozenMotion != nil || motion.status == .streaming }
+    var canRecenter: Bool { frozenMotion == nil && motion.status == .streaming }
+
+    func toggleFreeze() {
+        if frozenMotion != nil {
+            frozenMotion = nil
+            return
+        }
+        let frame = liveFrame(at: ProcessInfo.processInfo.systemUptime)
+        guard frame.edge != nil else { return }
+        frozenMotion = FrozenMotion(frame: frame)
+    }
+
+    // MARK: Headphones
+
+    static let deviceKeyDefaultsKey = "lastHeadphoneModel"
+
+    /// The headphones takes are recorded with and matched against. Sticky: it keeps the last
+    /// identified model while the headphones are briefly disconnected.
+    private(set) var deviceKey: String? = UserDefaults.standard.string(forKey: AppModel.deviceKeyDefaultsKey)
+
+    var headphoneName: String {
+        if let model = device.model { return model.name }
+        if let output = device.output, output.isBluetooth { return output.name }
+        return "No headphones"
+    }
+
+    var headphoneSymbol: String {
+        device.model?.symbol ?? "headphones"
+    }
+
+    var headphoneStatus: HeadphoneStatus {
+        switch motion.status {
+        case .streaming: return .streaming(rate: motion.sampleRate)
+        case .denied: return .denied
+        case .unsupported: return .unavailable("Motion unsupported on this Mac")
+        case .error(let message): return .unavailable(message)
+        case .waiting: break
+        }
+        guard let output = device.output, output.isBluetooth else { return .noHeadphones }
+        if let model = device.model, model.headTracking == .unsupported { return .unsupported(name: model.name) }
+        return .waiting
+    }
+
+    /// A connected head-tracking headphone that isn't the current output, to offer a switch.
+    var switchSuggestion: HeadphoneDeviceMonitor.Output? {
+        device.outputs.first { output in
+            output.id != device.currentOutputID && output.identification?.model.hasHeadTracking == true
+        }
+    }
+
+    /// Every take of a word across all headphones, for the delete confirmation.
+    func allTakeCount(for word: String) -> Int {
+        dataset.templates.filter { $0.label == word }.count
+    }
+
+    // MARK: Training
+
+    private(set) var dataset = TemplateStore.load()
+    var selectedWord: String?
+    var featureSet: FeatureSet = .all {
+        didSet { rebuildClassifier() }
+    }
+    private(set) var classifier: TemplateClassifier?
+    private(set) var evaluation: Evaluation?
+    private(set) var isEvaluating = false
+    private(set) var lastTemplateID: Template.ID?
+
+    // MARK: Decoding
+
+    var decodeMode: CaptureController.Mode = .hold {
+        didSet { syncCaptureMode() }
+    }
+    var maxDistance: Double = 1.5
+    var minConfidence: Double = 0.05
+    private(set) var decoded: [DecodedWord] = []
+    private(set) var lastSegment: [MotionSample] = []
+
+    @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var started = false
+
+    init() {
+        selectedWord = dataset.vocabulary.first
+        rebuildClassifier()
+    }
+
+    func start() {
+        guard !started else { return }
+        started = true
+        motion.onSample = { [weak self] sample in self?.ingest(sample) }
+        motion.onConnectionChange = { [weak self] connected in
+            if !connected { self?.frozenMotion = nil }
+            self?.device.refresh()
+        }
+        capture.onSegment = { [weak self] segment in self?.handleSegment(segment) }
+        device.onModelChange = { [weak self] in self?.headphonesChanged() }
+        device.start()
+        motion.start()
+        audio.refreshDevices()
+        installKeyMonitor()
+    }
+
+    private func ingest(_ sample: MotionSample) {
+        capture.ingest(sample)
+        recorder.record(sample)
+    }
+
+    /// Re-keys the take set only for a confirmed model, so a failed or early Bluetooth lookup
+    /// can't hide the takes recorded with the real headphones.
+    private func headphonesChanged() {
+        guard device.isModelConfirmed, let model = device.model, model.id != deviceKey else { return }
+        deviceKey = model.id
+        UserDefaults.standard.set(model.id, forKey: Self.deviceKeyDefaultsKey)
+        rebuildClassifier()
+    }
+
+    private func syncCaptureMode() {
+        capture.autoEnabled = screen == .decode && decodeMode == .auto
+    }
+
+    private func handleSegment(_ segment: [MotionSample]) {
+        lastSegment = segment
+        switch screen {
+        case .train:
+            guard let word = selectedWord else { return }
+            addTemplate(Template(label: word, samples: segment, device: deviceKey))
+            recorder.logEvent(segment, kind: "train", label: word, confidence: nil)
+        case .decode:
+            guard let classifier else { return }
+            let prediction = classifier.predict(segment, maxDistance: maxDistance, minConfidence: minConfidence)
+            decoded.append(DecodedWord(prediction: prediction))
+            recorder.logEvent(segment, kind: prediction.accepted ? "decode" : "reject",
+                              label: prediction.best?.label ?? "", confidence: prediction.confidence)
+        case .live:
+            recorder.logEvent(segment, kind: "segment", label: recorder.prompt, confidence: nil)
+        }
+    }
+
+    // MARK: Space bar = hold to capture
+
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            guard event.keyCode == 49 else { return event }
+            let isDown = event.type == .keyDown
+            let isRepeat = isDown && event.isARepeat
+            let consumed = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.spaceCapturesMotion else { return false }
+                if !isDown {
+                    self.capture.end()
+                } else if !isRepeat {
+                    self.capture.begin()
+                }
+                return true
+            }
+            return consumed ? nil : event
+        }
+    }
+
+    private var spaceCapturesMotion: Bool {
+        // Let text fields keep the space bar.
+        if NSApp.keyWindow?.firstResponder is NSText { return false }
+        switch screen {
+        case .train: return selectedWord != nil
+        case .decode: return decodeMode == .hold && classifier != nil
+        case .live: return recorder.isRecording
+        }
+    }
+
+    // MARK: Dataset editing
+
+    /// Takes recorded with the current headphones.
+    var activeTemplates: [Template] {
+        dataset.templates(forDevice: deviceKey)
+    }
+
+    func templates(for word: String) -> [Template] {
+        activeTemplates.filter { $0.label == word }
+    }
+
+    func addWord(_ raw: String) {
+        let word = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !word.isEmpty, !dataset.vocabulary.contains(word) else { return }
+        dataset.vocabulary.append(word)
+        selectedWord = word
+        persist()
+    }
+
+    func removeWord(_ word: String) {
+        dataset.vocabulary.removeAll { $0 == word }
+        dataset.templates.removeAll { $0.label == word }
+        if selectedWord == word { selectedWord = dataset.vocabulary.first }
+        persist()
+    }
+
+    func addTemplate(_ template: Template) {
+        dataset.templates.append(template)
+        lastTemplateID = template.id
+        persist()
+    }
+
+    func deleteTemplate(_ id: Template.ID) {
+        dataset.templates.removeAll { $0.id == id }
+        persist()
+    }
+
+    private func persist() {
+        TemplateStore.save(dataset)
+        rebuildClassifier()
+    }
+
+    private func rebuildClassifier() {
+        classifier = TemplateClassifier(templates: activeTemplates, featureSet: featureSet)
+        evaluation = nil
+    }
+
+    func evaluate() {
+        guard !isEvaluating else { return }
+        isEvaluating = true
+        let templates = activeTemplates
+        let featureSet = featureSet
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Evaluation.run(templates: templates, featureSet: featureSet)
+            }.value
+            self.isEvaluating = false
+            guard self.featureSet == featureSet, self.activeTemplates == templates else { return }
+            self.evaluation = result
+        }
+    }
+
+    // MARK: Decode transcript
+
+    var transcript: String {
+        decoded.filter(\.prediction.accepted).map(\.text).joined(separator: " ")
+    }
+
+    func clearDecoded() {
+        decoded.removeAll()
+        lastSegment = []
+    }
+
+    // MARK: Mic
+
+    func toggleMic() async {
+        if audio.isRunning {
+            transcriber.stop()
+            audio.stop()
+        } else {
+            await audio.start()
+            if audio.isRunning { await transcriber.start(sink: audio.sink) }
+        }
+    }
+}
