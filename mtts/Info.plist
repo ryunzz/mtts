@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>mtts</string>
+	<key>CFBundleExecutable</key>
+	<string>mtts</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.ryunzz.mtts</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>mtts</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSMotionUsageDescription</key>
+	<string>mtts reads head-motion data from your Powerbeats Pro 2 (or other head-tracking headphones) to study whether mouthed words can be decoded into text.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>mtts reads the model ID of your connected headphones to tell whether they support head tracking.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>mtts records microphone audio alongside motion data and transcribes whispered speech for comparison.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>mtts transcribes microphone audio on-device as a reference for the motion decoder.</string>
+</dict>
+</plist>
