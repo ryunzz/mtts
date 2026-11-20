@@ -17,6 +17,7 @@ struct LiveView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
             HeadShortcutsCard()
+            HeadPointerCard()
             GestureClickCard()
             HStack(alignment: .top, spacing: 16) {
                 AccelerometerCard()
